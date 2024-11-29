@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sabrina Example Forum</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js";
+
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyBVfwAPViODeFDAjL5DghSw5d-Fn-UqxDg",
+            authDomain: "exampleforum-d3b76.firebaseapp.com",
+            databaseURL: "https://exampleforum-d3b76-default-rtdb.firebaseio.com",
+            projectId: "exampleforum-d3b76",
+            storageBucket: "exampleforum-d3b76.firebasestorage.app",
+            messagingSenderId: "836156185296",
+            appId: "1:836156185296:web:b64d296ee11b8ee4061cd5",
+            measurementId: "G-MJJLXV6595"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+        console.log('Firebase initialized');
+
+        // Initialize default data if none exists
+        const defaultData = {
+            users: [],
+            topics: [],
+            posts: []
+        };
+
+        // Make Firebase functions available globally
+        window.saveForumData = function() {
+            console.log('Saving data to Firebase:', window.forumData);
+            if (!window.forumData) {
+                console.error('forumData is undefined');
+                return;
+            }
+            return set(ref(database, 'forumData'), window.forumData)
+                .then(() => {
+                    console.log('Data saved successfully');
+                    return true;
+                })
+                .catch(error => {
+                    console.error('Error saving data:', error);
+                    return false;
+                });
+        };
+
+        // Listen for changes
+        onValue(ref(database, 'forumData'), (snapshot) => {
+            const data = snapshot.val();
+            console.log('Received data from Firebase:', data);
+            
+            window.forumData = data || {
+                users: [],
+                topics: [],
+                posts: []
+            };
+            
+            console.log('Updated window.forumData:', window.forumData);
+            
+            if (window.updateStats) {
+                window.updateStats();
+            }
+            if (window.displayTopics) {
+                window.displayTopics();
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="forum-container">
+        <header class="forum-header">
+            <h1>Sabrina Example Forum</h1>
+            <div id="userArea">
+                <button id="loginBtn" onclick="toggleLogin()">Login</button>
+                <span id="userInfo" style="display: none;">
+                    Welcome, <span id="username"></span>
+                    <button onclick="logout()">Logout</button>
+                </span>
+            </div>
+        </header>
+
+        <!-- Login Form -->
+        <div id="loginForm" class="modal" style="display: none;">
+            <div class="modal-content">
+                <h2>Login/Register</h2>
+                <input type="text" id="usernameInput" placeholder="Username">
+                <input type="password" id="passwordInput" placeholder="Password">
+                <button onclick="login()">Submit</button>
+            </div>
+        </div>
+
+        <!-- Forum Categories -->
+        <div class="forum-section">
+            <h2>Categories</h2>
+            <div id="categories">
+                <div class="category" onclick="showCategoryTopics('general')">
+                    <h3>General Discussion</h3>
+                    <div class="forum-stats">
+                        Topics: <span id="generalTopics">0</span> | 
+                        Posts: <span id="generalPosts">0</span>
+                    </div>
+                </div>
+                <div class="category" onclick="showCategoryTopics('tech')">
+                    <h3>Technical Support</h3>
+                    <div class="forum-stats">
+                        Topics: <span id="techTopics">0</span> | 
+                        Posts: <span id="techPosts">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Topics List -->
+        <div class="forum-section">
+            <h2>Recent Topics</h2>
+            <button id="newTopicBtn" onclick="showNewTopicForm()">New Topic</button>
+            <div id="topicsList"></div>
+        </div>
+
+        <!-- New Topic Form -->
+        <div id="newTopicForm" class="modal" style="display: none;">
+            <div class="modal-content">
+                <h2>Create New Topic</h2>
+                <select id="topicCategory">
+                    <option value="general">General Discussion</option>
+                    <option value="tech">Technical Support</option>
+                </select>
+                <input type="text" id="topicTitle" placeholder="Topic Title">
+                <textarea id="topicContent" placeholder="Topic Content"></textarea>
+                <button onclick="createTopic()">Create Topic</button>
+                <button onclick="hideNewTopicForm()">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Topic View -->
+        <div id="topicView" class="forum-section" style="display: none;">
+            <button onclick="backToTopics()">← Back</button>
+            <div id="topicDetail"></div>
+            <div id="replies"></div>
+            <div id="replyForm" style="display: none;">
+                <h3>Post Reply</h3>
+                <textarea id="replyContent" placeholder="Your reply..."></textarea>
+                <button onclick="submitReply()">Post Reply</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let currentTopic = null;
+
+        // Move init to window object so Firebase can access it
+        window.init = function() {
+            // Check session first
+            if (checkSession()) {
+                console.log('Restored session for user:', currentUser);
+                checkLoginStatus(); // Update UI immediately
+            }
+        }
+
+        // Add DOMContentLoaded event listener
+        document.addEventListener('DOMContentLoaded', function() {
+            window.init();
+        });
+
+        // Update the Firebase onValue listener to preserve session
+        onValue(ref(database, 'forumData'), (snapshot) => {
+            const data = snapshot.val();
+            console.log('Received data from Firebase:', data);
+            
+            window.forumData = data || {
+                users: [],
+                topics: [],
+                posts: []
+            };
+            
+            console.log('Updated window.forumData:', window.forumData);
+            
+            // Only update UI if not first load
+            if (window.updateStats) {
+                window.updateStats();
+            }
+            if (window.displayTopics) {
+                window.displayTopics();
+            }
+            
+            // Ensure login status is maintained
+            if (currentUser) {
+                checkLoginStatus();
+            }
+        });
+
+        // Update checkSession function to be more robust
+        function checkSession() {
+            const sessionData = localStorage.getItem('forumSession');
+            if (sessionData) {
+                try {
+                    const session = JSON.parse(sessionData);
+                    const now = new Date().getTime();
+                    
+                    if (now < session.expires) {
+                        // Session is still valid
+                        currentUser = session.username;
+                        console.log('Session restored for:', currentUser);
+                        return true;
+                    } else {
+                        // Session expired
+                        console.log('Session expired');
+                        localStorage.removeItem('forumSession');
+                    }
+                } catch (e) {
+                    console.error('Error parsing session:', e);
+                    localStorage.removeItem('forumSession');
+                }
+            }
+            return false;
+        }
+
+        // Update saveSession to be more robust
+        function saveSession(username) {
+            try {
+                const sessionData = {
+                    username: username,
+                    expires: new Date().getTime() + (24 * 60 * 60 * 1000) // 24 hours from now
+                };
+                localStorage.setItem('forumSession', JSON.stringify(sessionData));
+                console.log('Session saved for:', username);
+            } catch (e) {
+                console.error('Error saving session:', e);
+            }
+        }
+
+        // User Management
+        function toggleLogin() {
+            const loginForm = document.getElementById('loginForm');
+            loginForm.style.display = loginForm.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function login() {
+            const username = document.getElementById('usernameInput').value;
+            const password = document.getElementById('passwordInput').value;
+
+            if (!username || !password) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            let user = forumData.users.find(u => u.username === username);
+            if (!user) {
+                // Register new user
+                user = { username, password };
+                console.log('Creating new user:', user);
+                forumData.users.push(user);
+                saveForumData();
+                console.log('Updated users list:', forumData.users);
+            } else if (user.password !== password) {
+                alert('Invalid password');
+                return;
+            }
+
+            currentUser = username;
+            saveSession(username); // Save the session
+            checkLoginStatus();
+            toggleLogin();
+            clearLoginForm();
+        }
+
+        function logout() {
+            currentUser = null;
+            localStorage.removeItem('forumSession'); // Clear the session
+            checkLoginStatus();
+        }
+
+        function checkLoginStatus() {
+            const userInfo = document.getElementById('userInfo');
+            const loginBtn = document.getElementById('loginBtn');
+            const newTopicBtn = document.getElementById('newTopicBtn');
+
+            if (currentUser) {
+                userInfo.style.display = 'inline';
+                loginBtn.style.display = 'none';
+                newTopicBtn.style.display = 'block';
+                document.getElementById('username').textContent = currentUser;
+            } else {
+                userInfo.style.display = 'none';
+                loginBtn.style.display = 'inline';
+                newTopicBtn.style.display = 'none';
+            }
+        }
+
+        // Topic Management
+        function showNewTopicForm() {
+            document.getElementById('newTopicForm').style.display = 'block';
+        }
+
+        function hideNewTopicForm() {
+            document.getElementById('newTopicForm').style.display = 'none';
+        }
+
+        function createTopic() {
+            if (!currentUser) {
+                alert('Please login first');
+                return;
+            }
+
+            const title = document.getElementById('topicTitle').value;
+            const content = document.getElementById('topicContent').value;
+            const category = document.getElementById('topicCategory').value;
+
+            if (!title || !content) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            const topic = {
+                id: Date.now(),
+                title,
+                content,
+                category,
+                author: currentUser,
+                date: new Date().toISOString(),
+                replies: []
+            };
+
+            console.log('Creating new topic:', topic);
+            
+            // Initialize topics array if it doesn't exist
+            if (!window.forumData.topics) {
+                window.forumData.topics = [];
+            }
+            
+            // Add the new topic
+            window.forumData.topics.push(topic);
+            
+            console.log('Updated forumData:', window.forumData);
+            
+            // Clear the form
+            document.getElementById('topicTitle').value = '';
+            document.getElementById('topicContent').value = '';
+            
+            // Save to Firebase and update display
+            saveForumData();
+            hideNewTopicForm();
+            displayTopics();
+            updateStats();
+        }
+
+        function displayTopics(category = null) {
+            const topicsList = document.getElementById('topicsList');
+            topicsList.innerHTML = '';
+
+            // Ensure topics array exists
+            const topics = window.forumData.topics || [];
+            
+            let filteredTopics = topics;
+            if (category) {
+                filteredTopics = topics.filter(t => t.category === category);
+            }
+
+            console.log('Displaying topics:', filteredTopics);
+
+            filteredTopics.sort((a, b) => new Date(b.date) - new Date(a.date))
+                .forEach(topic => {
+                    // Ensure replies array exists
+                    const repliesCount = topic.replies ? topic.replies.length : 0;
+                    
+                    const topicElement = document.createElement('div');
+                    topicElement.className = 'topic';
+                    topicElement.innerHTML = `
+                        <h3 class="topic-title" onclick="viewTopic(${topic.id})">${topic.title}</h3>
+                        <div class="topic-meta">
+                            <span>
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                                    <path fill-rule="evenodd" d="M8 16A8 8 0 108 0a8 8 0 000 16zm1-8.577V4a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L9 7.586z"/>
+                                </svg>
+                                ${new Date(topic.date).toLocaleDateString()}
+                            </span>
+                            <span>
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                                    <path fill-rule="evenodd" d="M8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z"/>
+                                </svg>
+                                ${topic.author}
+                            </span>
+                            <span class="badge">${repliesCount} replies</span>
+                        </div>
+                    `;
+                    topicsList.appendChild(topicElement);
+                });
+        }
+
+        function showCategoryTopics(category) {
+            document.getElementById('topicView').style.display = 'none';
+            document.querySelector('.forum-section h2').textContent = 
+                category === 'general' ? 'General Discussion' : 'Technical Support';
+            displayTopics(category);
+        }
+
+        function viewTopic(topicId) {
+            currentTopic = forumData.topics.find(t => t.id === topicId);
+            if (!currentTopic) return;
+
+            document.getElementById('topicsList').parentElement.style.display = 'none';
+            const topicView = document.getElementById('topicView');
+            const topicDetail = document.getElementById('topicDetail');
+            
+            topicView.style.display = 'block';
+            topicDetail.innerHTML = `
+                <h2>${currentTopic.title}</h2>
+                <div class="topic-meta">
+                    <span>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                            <path fill-rule="evenodd" d="M8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z"/>
+                        </svg>
+                        ${currentTopic.author}
+                    </span>
+                    <span>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                            <path fill-rule="evenodd" d="M8 16A8 8 0 108 0a8 8 0 000 16zm1-8.577V4a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L9 7.586z"/>
+                        </svg>
+                        ${new Date(currentTopic.date).toLocaleDateString()}
+                    </span>
+                </div>
+                <div class="topic-content">${currentTopic.content}</div>
+            `;
+
+            displayReplies();
+            
+            // Show reply form only if user is logged in
+            const replyForm = document.getElementById('replyForm');
+            if (currentUser) {
+                replyForm.style.display = 'block';
+                replyForm.innerHTML = `
+                    <h3>Post Reply</h3>
+                    <textarea id="replyContent" placeholder="Write your reply here..."></textarea>
+                    <button onclick="submitReply()">Post Reply</button>
+                `;
+            } else {
+                replyForm.innerHTML = `
+                    <p class="login-prompt">Please <a href="#" onclick="toggleLogin()">login</a> to reply</p>
+                `;
+                replyForm.style.display = 'block';
+            }
+        }
+
+        function displayReplies() {
+            const repliesDiv = document.getElementById('replies');
+            repliesDiv.innerHTML = '<h3>Replies</h3>';
+            
+            if (!currentTopic.replies || currentTopic.replies.length === 0) {
+                repliesDiv.innerHTML += '<p class="no-replies">No replies yet. Be the first to reply!</p>';
+                return;
+            }
+            
+            currentTopic.replies.forEach(reply => {
+                const replyElement = document.createElement('div');
+                replyElement.className = 'reply';
+                replyElement.innerHTML = `
+                    <div class="reply-content">${reply.content}</div>
+                    <div class="reply-meta">
+                        <span>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                                <path fill-rule="evenodd" d="M8 0a8 8 0 100 16A8 8 0 008 0zm.5 4.75a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z"/>
+                            </svg>
+                            ${reply.author}
+                        </span>
+                        <span>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom">
+                                <path fill-rule="evenodd" d="M8 16A8 8 0 108 0a8 8 0 000 16zm1-8.577V4a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L9 7.586z"/>
+                            </svg>
+                            ${new Date(reply.date).toLocaleDateString()}
+                        </span>
+                    </div>
+                `;
+                repliesDiv.appendChild(replyElement);
+            });
+        }
+
+        function submitReply() {
+            if (!currentUser || !currentTopic) return;
+            
+            const content = document.getElementById('replyContent').value.trim();
+            if (!content) {
+                alert('Please enter a reply');
+                return;
+            }
+
+            const reply = {
+                content,
+                author: currentUser,
+                date: new Date().toISOString()
+            };
+
+            console.log('Adding reply:', reply);
+
+            // Initialize replies array if it doesn't exist
+            if (!currentTopic.replies) {
+                currentTopic.replies = [];
+            }
+
+            // Add reply to current topic
+            currentTopic.replies.push(reply);
+
+            // Find and update the topic in the main forumData array
+            const topicIndex = window.forumData.topics.findIndex(t => t.id === currentTopic.id);
+            if (topicIndex !== -1) {
+                window.forumData.topics[topicIndex] = currentTopic;
+                console.log('Updated topic in forumData:', window.forumData.topics[topicIndex]);
+            }
+
+            // Save to Firebase and update display
+            saveForumData();
+            document.getElementById('replyContent').value = '';
+            displayReplies();
+            updateStats();
+        }
+
+        function backToTopics() {
+            document.getElementById('topicView').style.display = 'none';
+            document.getElementById('topicsList').parentElement.style.display = 'block';
+            currentTopic = null;
+        }
+
+        function updateStats() {
+            const topics = window.forumData.topics || [];
+            
+            const generalTopics = topics.filter(t => t.category === 'general').length;
+            const techTopics = topics.filter(t => t.category === 'tech').length;
+            
+            document.getElementById('generalTopics').textContent = generalTopics;
+            document.getElementById('techTopics').textContent = techTopics;
+            
+            const generalPosts = topics
+                .filter(t => t.category === 'general')
+                .reduce((acc, t) => acc + (t.replies ? t.replies.length : 0) + 1, 0);
+            
+            const techPosts = topics
+                .filter(t => t.category === 'tech')
+                .reduce((acc, t) => acc + (t.replies ? t.replies.length : 0) + 1, 0);
+            
+            document.getElementById('generalPosts').textContent = generalPosts;
+            document.getElementById('techPosts').textContent = techPosts;
+        }
+
+        function saveForumData() {
+            if (!window.forumData) {
+                window.forumData = {
+                    users: [],
+                    topics: [],
+                    posts: []
+                };
+            }
+            console.log('Saving data to Firebase:', window.forumData);
+            window.saveForumData(); // This calls the Firebase save function we defined in the module
+        }
+
+        function clearLoginForm() {
+            document.getElementById('usernameInput').value = '';
+            document.getElementById('passwordInput').value = '';
+        }
+    </script>
+</body>
+</html> 
